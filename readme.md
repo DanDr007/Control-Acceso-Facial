@@ -223,13 +223,3 @@ El sistema puede reducir su precisión en situaciones como:
 ## Autor
 
 **Daniel Díaz**
-
-Estudiante de Ingeniería en Sistemas Computacionales.
-
-Proyecto desarrollado con fines académicos y de aprendizaje en visión por computadora y reconocimiento facial utilizando Python.
-
----
-
-## Licencia
-
-Este proyecto se distribuye únicamente con fines educativos y de investigación.
