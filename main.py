@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, filedialog
 import cv2
 import face_recognition
 import pickle
@@ -14,7 +14,7 @@ BASE_DIR = Path(__file__).resolve().parent
 ARCHIVO_USUARIOS = BASE_DIR / "usuarios.pkl"
 
 # ==========================
-# DATOS
+# CARGAR / GUARDAR
 # ==========================
 
 def cargar_usuarios():
@@ -24,11 +24,20 @@ def cargar_usuarios():
     except:
         return []
 
+
 def guardar_usuarios():
     with open(ARCHIVO_USUARIOS, "wb") as f:
         pickle.dump(usuarios, f)
 
+
+# ==========================
+# DATOS
+# ==========================
+
 usuarios = cargar_usuarios()
+
+ultimo_frame_rgb = None
+ultima_cara = None
 
 # ==========================
 # TKINTER
@@ -41,34 +50,33 @@ ventana.geometry("900x700")
 label_video = tk.Label(ventana)
 label_video.pack()
 
+# ==========================
+# ENTRY NOMBRE
+# ==========================
+
 tk.Label(
     ventana,
     text="Nombre"
 ).pack()
 
-entry_nombre = tk.Entry(ventana)
-entry_nombre.pack()
+entry_nombre = tk.Entry(
+    ventana,
+    width=40
+)
+entry_nombre.pack(pady=5)
+
+# ==========================
+# LISTA USUARIOS
+# ==========================
 
 lista_usuarios = tk.Listbox(
     ventana,
-    width=40,
+    width=50,
     height=8
 )
 
 lista_usuarios.pack(pady=10)
 
-# ==========================
-# VARIABLES
-# ==========================
-
-camara = cv2.VideoCapture(0)
-
-ultimo_frame_rgb = None
-ultima_cara = None
-
-# ==========================
-# LISTBOX
-# ==========================
 
 def actualizar_lista():
 
@@ -81,8 +89,15 @@ def actualizar_lista():
             usuario["nombre"]
         )
 
+
 # ==========================
-# WEBCAM
+# CAMARA
+# ==========================
+
+camara = cv2.VideoCapture(0)
+
+# ==========================
+# DETECCION
 # ==========================
 
 def actualizar():
@@ -109,7 +124,7 @@ def actualizar():
         ultimo_frame_rgb = rgb.copy()
         ultima_cara = None
 
-        pequeño = cv2.resize(
+        frame_pequeño = cv2.resize(
             rgb,
             (0, 0),
             fx=0.25,
@@ -117,7 +132,7 @@ def actualizar():
         )
 
         caras = face_recognition.face_locations(
-            pequeño
+            frame_pequeño
         )
 
         for top, right, bottom, left in caras:
@@ -159,7 +174,8 @@ def obtener_encoding_actual():
 
     if (
         ultimo_frame_rgb is None
-        or ultima_cara is None
+        or
+        ultima_cara is None
     ):
         return None
 
@@ -174,7 +190,7 @@ def obtener_encoding_actual():
     return encodings[0]
 
 # ==========================
-# REGISTRAR
+# REGISTRAR WEBCAM
 # ==========================
 
 def registrar():
@@ -187,8 +203,18 @@ def registrar():
             "Error",
             "Introduce un nombre"
         )
-
         return
+
+    for usuario in usuarios:
+
+        if usuario["nombre"].lower() == nombre.lower():
+
+            messagebox.showwarning(
+                "Error",
+                "Ese usuario ya existe"
+            )
+
+            return
 
     encoding = obtener_encoding_actual()
 
@@ -222,6 +248,113 @@ def registrar():
     )
 
 # ==========================
+# REGISTRAR IMAGEN
+# ==========================
+
+def registrar_imagen():
+
+    nombre = entry_nombre.get().strip()
+
+    if not nombre:
+
+        messagebox.showwarning(
+            "Error",
+            "Introduce un nombre"
+        )
+
+        return
+
+    for usuario in usuarios:
+
+        if usuario["nombre"].lower() == nombre.lower():
+
+            messagebox.showwarning(
+                "Error",
+                "Ese usuario ya existe"
+            )
+
+            return
+
+    ruta = filedialog.askopenfilename(
+        title="Seleccionar imagen",
+        filetypes=[
+            ("Imágenes", "*.jpg *.jpeg *.png *.bmp *.webp")
+        ]
+    )
+
+    if not ruta:
+        return
+
+    try:
+
+        imagen = face_recognition.load_image_file(
+            ruta
+        )
+
+        caras = face_recognition.face_locations(
+            imagen
+        )
+
+        if len(caras) == 0:
+
+            messagebox.showwarning(
+                "Error",
+                "No se detectó ninguna cara"
+            )
+
+            return
+
+        if len(caras) > 1:
+
+            messagebox.showwarning(
+                "Error",
+                "La imagen contiene más de una cara"
+            )
+
+            return
+
+        encoding = face_recognition.face_encodings(
+            imagen,
+            [caras[0]]
+        )
+
+        if not encoding:
+
+            messagebox.showwarning(
+                "Error",
+                "No se pudo generar el encoding"
+            )
+
+            return
+
+        usuarios.append(
+            {
+                "nombre": nombre,
+                "encoding": encoding[0]
+            }
+        )
+
+        guardar_usuarios()
+        actualizar_lista()
+
+        entry_nombre.delete(
+            0,
+            tk.END
+        )
+
+        messagebox.showinfo(
+            "Correcto",
+            f"{nombre} registrado desde imagen"
+        )
+
+    except Exception as e:
+
+        messagebox.showerror(
+            "Error",
+            str(e)
+        )
+
+# ==========================
 # ELIMINAR
 # ==========================
 
@@ -233,6 +366,16 @@ def eliminar():
         return
 
     indice = seleccion[0]
+
+    nombre = usuarios[indice]["nombre"]
+
+    respuesta = messagebox.askyesno(
+        "Confirmación",
+        f"¿Eliminar a {nombre}?"
+    )
+
+    if not respuesta:
+        return
 
     usuarios.pop(indice)
 
@@ -257,6 +400,7 @@ def verificar():
         return
 
     mejor_nombre = None
+    mejor_distancia = 1.0
 
     for usuario in usuarios:
 
@@ -265,50 +409,69 @@ def verificar():
             encoding_actual
         )[0]
 
-        if distancia < 0.5:
+        if distancia < mejor_distancia:
 
+            mejor_distancia = distancia
             mejor_nombre = usuario["nombre"]
 
-            break
-
-    if mejor_nombre:
+    if mejor_nombre is not None and mejor_distancia < 0.5:
 
         messagebox.showinfo(
-            "Acceso",
-            f"Autorizado: {mejor_nombre}"
+            "Acceso concedido",
+            f"Usuario autorizado:\n\n{mejor_nombre}\n\nDistancia: {mejor_distancia:.3f}"
         )
 
     else:
 
         messagebox.showwarning(
-            "Acceso",
-            "NO AUTORIZADO"
+            "Acceso denegado",
+            "Usuario no autorizado"
         )
 
 # ==========================
 # BOTONES
 # ==========================
 
-frame_botones = tk.Frame(ventana)
+frame_botones = tk.Frame(
+    ventana
+)
 frame_botones.pack(pady=10)
 
 tk.Button(
     frame_botones,
-    text="Registrar",
+    text="Registrar Webcam",
     command=registrar
-).pack(side="left", padx=5)
+).pack(
+    side="left",
+    padx=5
+)
 
 tk.Button(
     frame_botones,
-    text="Eliminar",
-    command=eliminar
-).pack(side="left", padx=5)
+    text="Registrar Imagen",
+    command=registrar_imagen
+).pack(
+    side="left",
+    padx=5
+)
 
 tk.Button(
     frame_botones,
     text="Verificar",
     command=verificar
-).pack(side="left", padx=5)
+).pack(
+    side="left",
+    padx=5
+)
+
+tk.Button(
+    frame_botones,
+    text="Eliminar",
+    command=eliminar
+).pack(
+    side="left",
+    padx=5
+)
 
 # ==========================
 # CERRAR
