@@ -3,9 +3,8 @@ from tkinter import messagebox
 import cv2
 import face_recognition
 import pickle
-from PIL import Image, ImageTk
 from pathlib import Path
-
+from PIL import Image, ImageTk
 
 # ==========================
 # CONFIGURACION
@@ -14,51 +13,41 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 ARCHIVO_USUARIOS = BASE_DIR / "usuarios.pkl"
 
-
 # ==========================
-# CARGAR / GUARDAR
+# DATOS
 # ==========================
 
 def cargar_usuarios():
-    if ARCHIVO_USUARIOS.exists():
-        with open(ARCHIVO_USUARIOS, "rb") as archivo:
-            return pickle.load(archivo)
-    return []
-
+    try:
+        with open(ARCHIVO_USUARIOS, "rb") as f:
+            return pickle.load(f)
+    except:
+        return []
 
 def guardar_usuarios():
-    with open(ARCHIVO_USUARIOS, "wb") as archivo:
-        pickle.dump(usuarios, archivo)
+    with open(ARCHIVO_USUARIOS, "wb") as f:
+        pickle.dump(usuarios, f)
 
+usuarios = cargar_usuarios()
 
 # ==========================
-# VENTANA
+# TKINTER
 # ==========================
 
 ventana = tk.Tk()
 ventana.title("Control de Acceso Facial")
 ventana.geometry("900x700")
 
-
 label_video = tk.Label(ventana)
 label_video.pack()
 
+tk.Label(
+    ventana,
+    text="Nombre"
+).pack()
 
-# ==========================
-# VARIABLES
-# ==========================
-
-usuarios = cargar_usuarios()
-
-cara_actual = None
-encoding_actual = None
-
-camara = cv2.VideoCapture(0)
-
-
-# ==========================
-# LISTA DE USUARIOS
-# ==========================
+entry_nombre = tk.Entry(ventana)
+entry_nombre.pack()
 
 lista_usuarios = tk.Listbox(
     ventana,
@@ -68,13 +57,22 @@ lista_usuarios = tk.Listbox(
 
 lista_usuarios.pack(pady=10)
 
+# ==========================
+# VARIABLES
+# ==========================
+
+camara = cv2.VideoCapture(0)
+
+ultimo_frame_rgb = None
+ultima_cara = None
+
+# ==========================
+# LISTBOX
+# ==========================
 
 def actualizar_lista():
 
-    lista_usuarios.delete(
-        0,
-        tk.END
-    )
+    lista_usuarios.delete(0, tk.END)
 
     for usuario in usuarios:
 
@@ -83,28 +81,14 @@ def actualizar_lista():
             usuario["nombre"]
         )
 
-
-# ==========================
-# ENTRY NOMBRE
-# ==========================
-
-tk.Label(
-    ventana,
-    text="Nombre:"
-).pack()
-
-entry_nombre = tk.Entry(ventana)
-entry_nombre.pack()
-
-
 # ==========================
 # WEBCAM
 # ==========================
 
 def actualizar():
 
-    global cara_actual
-    global encoding_actual
+    global ultimo_frame_rgb
+    global ultima_cara
 
     ret, frame = camara.read()
 
@@ -112,19 +96,43 @@ def actualizar():
 
         frame = cv2.flip(frame, 1)
 
+        frame = cv2.resize(
+            frame,
+            (640, 480)
+        )
+
         rgb = cv2.cvtColor(
             frame,
             cv2.COLOR_BGR2RGB
         )
 
-        caras = face_recognition.face_locations(rgb)
+        ultimo_frame_rgb = rgb.copy()
+        ultima_cara = None
 
-        encoding_actual = None
-        cara_actual = None
+        pequeño = cv2.resize(
+            rgb,
+            (0, 0),
+            fx=0.25,
+            fy=0.25
+        )
 
-        for cara in caras:
+        caras = face_recognition.face_locations(
+            pequeño
+        )
 
-            top, right, bottom, left = cara
+        for top, right, bottom, left in caras:
+
+            top *= 4
+            right *= 4
+            bottom *= 4
+            left *= 4
+
+            ultima_cara = (
+                top,
+                right,
+                bottom,
+                left
+            )
 
             cv2.rectangle(
                 rgb,
@@ -134,21 +142,6 @@ def actualizar():
                 2
             )
 
-            cara_actual = rgb[
-                top:bottom,
-                left:right
-            ]
-
-            enc = face_recognition.face_encodings(
-                rgb,
-                [cara]
-            )
-
-            if enc:
-                encoding_actual = enc[0]
-
-            break
-
         img = ImageTk.PhotoImage(
             Image.fromarray(rgb)
         )
@@ -156,19 +149,35 @@ def actualizar():
         label_video.config(image=img)
         label_video.image = img
 
-    ventana.after(
-        10,
-        actualizar
+    ventana.after(30, actualizar)
+
+# ==========================
+# OBTENER ENCODING
+# ==========================
+
+def obtener_encoding_actual():
+
+    if (
+        ultimo_frame_rgb is None
+        or ultima_cara is None
+    ):
+        return None
+
+    encodings = face_recognition.face_encodings(
+        ultimo_frame_rgb,
+        [ultima_cara]
     )
 
+    if not encodings:
+        return None
+
+    return encodings[0]
 
 # ==========================
 # REGISTRAR
 # ==========================
 
 def registrar():
-
-    global encoding_actual
 
     nombre = entry_nombre.get().strip()
 
@@ -178,20 +187,24 @@ def registrar():
             "Error",
             "Introduce un nombre"
         )
+
         return
 
-    if encoding_actual is None:
+    encoding = obtener_encoding_actual()
+
+    if encoding is None:
 
         messagebox.showwarning(
             "Error",
             "No se detectó ninguna cara"
         )
+
         return
 
     usuarios.append(
         {
             "nombre": nombre,
-            "encoding": encoding_actual
+            "encoding": encoding
         }
     )
 
@@ -207,7 +220,6 @@ def registrar():
         "Correcto",
         f"{nombre} registrado"
     )
-
 
 # ==========================
 # ELIMINAR
@@ -227,14 +239,13 @@ def eliminar():
     guardar_usuarios()
     actualizar_lista()
 
-
 # ==========================
 # VERIFICAR
 # ==========================
 
 def verificar():
 
-    global encoding_actual
+    encoding_actual = obtener_encoding_actual()
 
     if encoding_actual is None:
 
@@ -249,14 +260,15 @@ def verificar():
 
     for usuario in usuarios:
 
-        resultado = face_recognition.compare_faces(
+        distancia = face_recognition.face_distance(
             [usuario["encoding"]],
             encoding_actual
-        )
+        )[0]
 
-        if resultado[0]:
+        if distancia < 0.5:
 
             mejor_nombre = usuario["nombre"]
+
             break
 
     if mejor_nombre:
@@ -270,9 +282,8 @@ def verificar():
 
         messagebox.showwarning(
             "Acceso",
-            "Persona NO autorizada"
+            "NO AUTORIZADO"
         )
-
 
 # ==========================
 # BOTONES
@@ -299,9 +310,8 @@ tk.Button(
     command=verificar
 ).pack(side="left", padx=5)
 
-
 # ==========================
-# CIERRE
+# CERRAR
 # ==========================
 
 def cerrar():
@@ -309,13 +319,12 @@ def cerrar():
     camara.release()
     ventana.destroy()
 
-
 ventana.protocol(
     "WM_DELETE_WINDOW",
     cerrar
 )
 
-actualizar()
 actualizar_lista()
+actualizar()
 
 ventana.mainloop()
